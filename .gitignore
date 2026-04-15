@@ -1,0 +1,21 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Training Data & Checkpoints (Massive files)
+checkpoints/
+models/
+
+# Logging & Monitoring
+wandb/
+*.log
+
+# Environment & Config
+.venv/
+env/
+venv/
+.env
+
+# Local Scratchpad
+scratch/
