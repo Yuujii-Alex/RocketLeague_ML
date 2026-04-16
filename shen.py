@@ -1,67 +1,108 @@
+from typing import Dict, Any
+
+import numpy as np
+from rlgym.api import RLGym, StateMutator
+from rlgym.rocket_league import common_values
+from rlgym.rocket_league.action_parsers import LookupTableAction, RepeatAction
+from rlgym.rocket_league.api import GameState
+from rlgym.rocket_league.done_conditions import GoalCondition, NoTouchTimeoutCondition
+from rlgym.rocket_league.obs_builders import DefaultObs
+from rlgym.rocket_league.reward_functions import CombinedReward
+from rlgym.rocket_league.sim import RocketSimEngine
+from rlgym.rocket_league.state_mutators import (
+    FixedTeamSizeMutator,
+    KickoffMutator,
+    MutatorSequence,
+)
+from rlgym_ppo.util import RLGymV2GymWrapper
+
+from rewards import (
+    AggressiveGoalReward,
+    AlignBallToGoalReward,
+    AerialGoalStrikeReward,
+    ConstantStepReward,
+    DribbleDecayReward,
+    LandOnWheelsReward,
+    PowerHitReward,
+    VelocityBallToGoalReward,
+)
+
+
+class DynamicStateMutator(StateMutator[GameState]):
+    def __init__(self, kickoff_prob: float = 0.35):
+        super().__init__()
+        self.kickoff_prob = kickoff_prob
+        self.kickoff_mutator = KickoffMutator()
+
+    def apply(self, state: GameState, shared_info: Dict[str, Any]) -> None:
+        if np.random.random() < self.kickoff_prob:
+            self.kickoff_mutator.apply(state, shared_info)
+            return
+
+        ball_height = np.random.choice([0, 1, 2], p=[0.6, 0.3, 0.1])
+        if ball_height == 0:
+            z = np.random.uniform(120, 350)
+        elif ball_height == 1:
+            z = np.random.uniform(350, 900)
+        else:
+            z = np.random.uniform(900, 1400)
+
+        state.ball.position = np.array(
+            [
+                np.random.uniform(-2200, 2200),
+                np.random.uniform(-3200, 3200),
+                z,
+            ],
+            dtype=np.float32,
+        )
+        state.ball.linear_velocity = np.random.uniform(-1200, 1200, 3).astype(
+            np.float32
+        )
+        state.ball.angular_velocity = np.random.uniform(-4, 4, 3).astype(np.float32)
+
+        for car in state.cars.values():
+            car.physics.position = np.array(
+                [
+                    np.random.uniform(-2600, 2600),
+                    np.random.uniform(-4200, 4200),
+                    17.0,
+                ],
+                dtype=np.float32,
+            )
+            car.physics.linear_velocity = np.random.uniform(-700, 700, 3).astype(
+                np.float32
+            )
+            car.physics.angular_velocity = np.random.uniform(-2, 2, 3).astype(
+                np.float32
+            )
+            car.physics.euler_angles = np.array(
+                [0.0, np.random.uniform(-np.pi, np.pi), 0.0], dtype=np.float32
+            )
+            car.boost_amount = np.random.uniform(35, 100)
+
+
 def build_rlgym_v2_env():
-    from rlgym.api import RLGym
-    from rlgym.rocket_league.action_parsers import LookupTableAction, RepeatAction
-    from rlgym.rocket_league.done_conditions import (
-        GoalCondition,
-        NoTouchTimeoutCondition,
-    )
-    from rlgym.rocket_league.obs_builders import DefaultObs
-    from rlgym.rocket_league.reward_functions import (
-        CombinedReward,
-        GoalReward,
-        TouchReward,
-    )
-    from rlgym.rocket_league.sim import RocketSimEngine
-    from rlgym.rocket_league.state_mutators import (
-        MutatorSequence,
-        FixedTeamSizeMutator,
-        KickoffMutator,
-    )
-    from rlgym.rocket_league import common_values
-    from rlgym_ppo.util import RLGymV2GymWrapper
-    import numpy as np
-
-    from rewards import (
-        InAirReward,
-        SpeedTowardBallReward,
-        FaceBallReward,
-        AlignBallToGoalReward,
-        PowerHitReward,
-        VelocityBallToGoalReward,
-        AggressiveGoalReward,
-        DemoReward,
-        SaveBoostReward,
-        BallDistanceReward,
-        DribbleDecayReward,
-        ConstantStepReward,
-        AerialGoalStrikeReward,
-    )
-
     spawn_opponents = True
     team_size = 1
     blue_team_size = team_size
     orange_team_size = team_size if spawn_opponents else 0
+
     action_repeat = 8
-    timeout_seconds = 10
+    timeout_seconds = 14
 
     action_parser = RepeatAction(LookupTableAction(), repeats=action_repeat)
     termination_condition = GoalCondition()
     truncation_condition = NoTouchTimeoutCondition(timeout_seconds=timeout_seconds)
 
     reward_fn = CombinedReward(
-        (DribbleDecayReward(), 5.0),
-        (SpeedTowardBallReward(), 0.05),
-        (FaceBallReward(), 0.05),
-        (AlignBallToGoalReward(), 0.5),
-        (VelocityBallToGoalReward(), 10.0),
-        (AggressiveGoalReward(), 50.0),
-        (ConstantStepReward(), -0.05),
-        (AerialGoalStrikeReward(), 15.0),
-        (PowerHitReward(), 20.0),
-        (BallDistanceReward(), 0.02),
-        (DemoReward(), 0.5),
-        (SaveBoostReward(), 0.001),
-        (InAirReward(), 0.0),
+        (AggressiveGoalReward(), 12.0),
+        (VelocityBallToGoalReward(), 4.0),
+        (AlignBallToGoalReward(), 0.35),
+        (PowerHitReward(), 1.5),
+        (DribbleDecayReward(), 0.3),
+        (AerialGoalStrikeReward(min_height=250.0), 4.0),
+        (LandOnWheelsReward(min_height=250.0), 0.8),
+        (ConstantStepReward(), -0.02),
     )
 
     obs_builder = DefaultObs(
@@ -81,7 +122,7 @@ def build_rlgym_v2_env():
 
     state_mutator = MutatorSequence(
         FixedTeamSizeMutator(blue_size=blue_team_size, orange_size=orange_team_size),
-        KickoffMutator(),
+        DynamicStateMutator(kickoff_prob=0.35),
     )
 
     rlgym_env = RLGym(
@@ -98,39 +139,39 @@ def build_rlgym_v2_env():
 
 
 if __name__ == "__main__":
-    from rlgym_ppo import Learner
     import os
+    from rlgym_ppo import Learner
 
     os.environ["WANDB_ENTITY"] = "guoalex.dev"
-    # 12-16 for max processes, 4-6 during workload/games
-    n_proc = 16
 
-    # educated guess - could be slightly higher or lower
+    n_proc = 16
     min_inference_size = max(1, int(round(n_proc * 0.9)))
 
     learner = Learner(
         build_rlgym_v2_env,
         n_proc=n_proc,
         min_inference_size=min_inference_size,
-        metrics_logger=None,  # Leave this empty for now.
-        ppo_batch_size=50_000,  # batch size - much higher than 300K doesn't seem to help most people
-        policy_layer_sizes=[1024, 1024, 512, 512],  # leaner policy network
-        critic_layer_sizes=[1024, 1024, 512, 512],  # leaner critic network
-        ts_per_iteration=50_000,  # timesteps per training iteration - set this equal to the batch size
-        exp_buffer_size=150_000,  # size of experience buffer - keep this 2 - 3x the batch size
-        ppo_minibatch_size=50_000,  # minibatch size - set this as high as your GPU can handle
-        ppo_ent_coef=0.005,  # entropy coefficient - resetting to 0.01 for fresh exploration
-        policy_lr=2e-4,  # policy learning rate
-        critic_lr=2e-4,  # critic learning rate
-        ppo_epochs=2,  # number of PPO epochs
-        standardize_returns=True,  # Don't touch these.
-        standardize_obs=False,  # Don't touch these.
-        save_every_ts=100_000,  # save every 1M steps
-        timestep_limit=1_000_000_000,  # Train for 1B steps
-        checkpoints_save_folder="checkpoints",  # Save checkpoints in a new folder
-        checkpoint_load_folder="latest",  # latest or None
+        metrics_logger=None,
+        ppo_batch_size=100_000,
+        policy_layer_sizes=[1024, 1024, 512, 512],
+        critic_layer_sizes=[1024, 1024, 512, 512],
+        ts_per_iteration=100_000,
+        exp_buffer_size=300_000,
+        ppo_minibatch_size=50_000,
+        ppo_ent_coef=0.008,
+        policy_lr=2e-4,
+        critic_lr=2e-4,
+        ppo_epochs=2,
+        standardize_returns=True,
+        standardize_obs=False,
+        save_every_ts=100_000,
+        timestep_limit=2_000_000_000,
+        checkpoints_save_folder="checkpoints",
+        checkpoint_load_folder=None,
         add_unix_timestamp=False,
-        log_to_wandb=True,  # Set this to True if you want to use Weights & Biases for logging.
-        wandb_project_name="ShenV2",  # New project for a clean graph
+        log_to_wandb=True,
+        wandb_project_name="Shen",
+        wandb_run_name="Shen_0.01",
     )
+
     learner.learn()

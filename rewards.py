@@ -491,3 +491,218 @@ class AerialGoalStrikeReward(RewardFunction[AgentID, GameState, float]):
 
         self.last_ball_vel = current_ball_vel.copy()
         return rewards
+
+
+class FirstTouchReward(RewardFunction[AgentID, GameState, float]):
+    """Rewards the agent for being the first to touch the ball, but only if it goes toward the opponent's half."""
+
+    def __init__(self):
+        super().__init__()
+        self.first_touch_occurred = False
+
+    def reset(
+        self,
+        agents: List[AgentID],
+        initial_state: GameState,
+        shared_info: Dict[str, Any],
+    ) -> None:
+        self.first_touch_occurred = False
+
+    def get_rewards(
+        self,
+        agents: List[AgentID],
+        state: GameState,
+        is_terminated: Dict[AgentID, bool],
+        is_truncated: Dict[AgentID, bool],
+        shared_info: Dict[str, Any],
+    ) -> Dict[AgentID, float]:
+        rewards = {agent: 0.0 for agent in agents}
+
+        if not self.first_touch_occurred:
+            for agent in agents:
+                car = state.cars[agent]
+                if car.ball_touches > 0:
+                    # A touch occurred! We mark it as occurred so nobody else can get it this kickoff.
+                    self.first_touch_occurred = True
+
+                    # Directional check: is the ball now moving toward the opponent's goal?
+                    # Blue (0) attacks Positive Y, Orange (1) attacks Negative Y
+                    ball_vel_y = state.ball.linear_velocity[1]
+                    is_forward = (car.team_num == common_values.BLUE_TEAM and ball_vel_y > 50) or \
+                                 (car.team_num == common_values.ORANGE_TEAM and ball_vel_y < -50)
+
+                    if is_forward:
+                        # Reward only if it was a productive first touch
+                        rewards[agent] = 1.0
+                    break
+
+        return rewards
+
+
+class LandOnWheelsReward(RewardFunction[AgentID, GameState, float]):
+    """Rewards the agent for landing on its wheels after being in the air, with height check to prevent farming."""
+
+    def __init__(self, min_height: float = 250.0):
+        super().__init__()
+        self.last_on_ground = {}
+        self.max_height_attained = {}
+        self.min_height = min_height
+
+    def reset(
+        self,
+        agents: List[AgentID],
+        initial_state: GameState,
+        shared_info: Dict[str, Any],
+    ) -> None:
+        self.last_on_ground = {agent: True for agent in agents}
+        self.max_height_attained = {agent: 0.0 for agent in agents}
+
+    def get_rewards(
+        self,
+        agents: List[AgentID],
+        state: GameState,
+        is_terminated: Dict[AgentID, bool],
+        is_truncated: Dict[AgentID, bool],
+        shared_info: Dict[str, Any],
+    ) -> Dict[AgentID, float]:
+        rewards = {agent: 0.0 for agent in agents}
+        for agent in agents:
+            car = state.cars[agent]
+            current_on_ground = car.on_ground
+            last_on_ground = self.last_on_ground.get(agent, True)
+
+            if not current_on_ground:
+                # Track max height in flight
+                self.max_height_attained[agent] = max(
+                    self.max_height_attained.get(agent, 0.0), car.physics.position[2]
+                )
+
+            # Trigger only at the moment of landing
+            if not last_on_ground and current_on_ground:
+                # Only reward if they actually jumped/flew high enough
+                if self.max_height_attained.get(agent, 0.0) > self.min_height:
+                    up_vector = car.physics.up
+                    alignment = up_vector[2]  # World Z is [0, 0, 1]
+
+                    # Reward if upright, penalize if on back/side
+                    rewards[agent] = float(alignment)
+
+                # Reset height tracking for next flight
+                self.max_height_attained[agent] = 0.0
+
+            self.last_on_ground[agent] = current_on_ground
+
+        return rewards
+
+
+class BoostTowardBallReward(RewardFunction[AgentID, GameState, float]):
+    """Rewards the agent for using boost while facing and moving toward the ball."""
+
+    def reset(
+        self,
+        agents: List[AgentID],
+        initial_state: GameState,
+        shared_info: Dict[str, Any],
+    ) -> None:
+        pass
+
+    def get_rewards(
+        self,
+        agents: List[AgentID],
+        state: GameState,
+        is_terminated: Dict[AgentID, bool],
+        is_truncated: Dict[AgentID, bool],
+        shared_info: Dict[str, Any],
+    ) -> Dict[AgentID, float]:
+        rewards = {agent: 0.0 for agent in agents}
+        for agent in agents:
+            car = state.cars[agent]
+            # Check if boosting
+            if car.is_boosting:
+                # Calculate velocity toward ball
+                pos_diff = state.ball.position - car.physics.position
+                dist = np.linalg.norm(pos_diff)
+                if dist > 1e-6:
+                    dir_to_ball = pos_diff / dist
+                    speed_toward_ball = np.dot(car.physics.linear_velocity, dir_to_ball)
+
+                    # Reward only if moving toward ball while boosting
+                    if speed_toward_ball > 0:
+                        # Scaling: 1.0 reward at max car speed
+                        rewards[agent] = float(
+                            speed_toward_ball / common_values.CAR_MAX_SPEED
+                        )
+        return rewards
+
+
+class AerialStabilityReward(RewardFunction[AgentID, GameState, float]):
+    """Nudges the agent to learn flight by rewarding boosting while pointing up in the air."""
+
+    def reset(
+        self,
+        agents: List[AgentID],
+        initial_state: GameState,
+        shared_info: Dict[str, Any],
+    ) -> None:
+        pass
+
+    def get_rewards(
+        self,
+        agents: List[AgentID],
+        state: GameState,
+        is_terminated: Dict[AgentID, bool],
+        is_truncated: Dict[AgentID, bool],
+        shared_info: Dict[str, Any],
+    ) -> Dict[AgentID, float]:
+        rewards = {agent: 0.0 for agent in agents}
+        for agent in agents:
+            car = state.cars[agent]
+            # In air AND boosting AND nose is pointed up
+            if (
+                not car.on_ground
+                and car.is_boosting
+                and car.physics.forward[2] > 0.3
+            ):
+                # Tiny constant reward to act as a 'signal'
+                rewards[agent] = 0.1
+        return rewards
+
+
+class SupersonicReward(RewardFunction[AgentID, GameState, float]):
+    """Rewards the agent for being in a supersonic state."""
+
+    def reset(self, agents, initial_state, shared_info) -> None:
+        pass
+
+    def get_rewards(
+        self, agents, state, is_terminated, is_truncated, shared_info
+    ) -> Dict[AgentID, float]:
+        return {agent: float(state.cars[agent].is_supersonic) for agent in agents}
+
+
+class ConserveBoostReward(RewardFunction[AgentID, GameState, float]):
+    """Very light penalty for using boost to discourage absolute waste."""
+
+    def __init__(self):
+        super().__init__()
+        self.last_boost = {}
+
+    def reset(self, agents, initial_state, shared_info) -> None:
+        self.last_boost = {
+            agent: initial_state.cars[agent].boost_amount for agent in agents
+        }
+
+    def get_rewards(
+        self, agents, state, is_terminated, is_truncated, shared_info
+    ) -> Dict[AgentID, float]:
+        rewards = {agent: 0.0 for agent in agents}
+        for agent in agents:
+            current_boost = state.cars[agent].boost_amount
+            last_boost = self.last_boost.get(agent, current_boost)
+
+            if last_boost > current_boost:
+                delta = last_boost - current_boost
+                rewards[agent] = -float(delta / 100.0)
+
+            self.last_boost[agent] = current_boost
+        return rewards
