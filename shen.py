@@ -21,7 +21,21 @@ def build_rlgym_v2_env():
     from rlgym_ppo.util import RLGymV2GymWrapper
     import numpy as np
 
-    from rewards import InAirReward, SpeedTowardBallReward, FaceBallReward
+    from rewards import (
+        InAirReward,
+        SpeedTowardBallReward,
+        FaceBallReward,
+        AlignBallToGoalReward,
+        PowerHitReward,
+        VelocityBallToGoalReward,
+        AggressiveGoalReward,
+        DemoReward,
+        SaveBoostReward,
+        BallDistanceReward,
+        DribbleDecayReward,
+        ConstantStepReward,
+        AerialGoalStrikeReward,
+    )
 
     spawn_opponents = True
     team_size = 1
@@ -35,11 +49,19 @@ def build_rlgym_v2_env():
     truncation_condition = NoTouchTimeoutCondition(timeout_seconds=timeout_seconds)
 
     reward_fn = CombinedReward(
-        (TouchReward(), 50),
-        (GoalReward(), 10.0),
-        (InAirReward(), 0.15),
-        (SpeedTowardBallReward(), 5),
-        (FaceBallReward(), 1),
+        (DribbleDecayReward(), 5.0),
+        (SpeedTowardBallReward(), 0.05),
+        (FaceBallReward(), 0.05),
+        (AlignBallToGoalReward(), 0.5),
+        (VelocityBallToGoalReward(), 10.0),
+        (AggressiveGoalReward(), 50.0),
+        (ConstantStepReward(), -0.05),
+        (AerialGoalStrikeReward(), 15.0),
+        (PowerHitReward(), 20.0),
+        (BallDistanceReward(), 0.02),
+        (DemoReward(), 0.5),
+        (SaveBoostReward(), 0.001),
+        (InAirReward(), 0.0),
     )
 
     obs_builder = DefaultObs(
@@ -80,8 +102,8 @@ if __name__ == "__main__":
     import os
 
     os.environ["WANDB_ENTITY"] = "guoalex.dev"
-    # 6 CPU processes
-    n_proc = 12
+    # 12-16 for max processes, 4-6 during workload/games
+    n_proc = 16
 
     # educated guess - could be slightly higher or lower
     min_inference_size = max(1, int(round(n_proc * 0.9)))
@@ -97,7 +119,7 @@ if __name__ == "__main__":
         ts_per_iteration=50_000,  # timesteps per training iteration - set this equal to the batch size
         exp_buffer_size=150_000,  # size of experience buffer - keep this 2 - 3x the batch size
         ppo_minibatch_size=50_000,  # minibatch size - set this as high as your GPU can handle
-        ppo_ent_coef=0.01,  # entropy coefficient - resetting to 0.01 for fresh exploration
+        ppo_ent_coef=0.005,  # entropy coefficient - resetting to 0.01 for fresh exploration
         policy_lr=2e-4,  # policy learning rate
         critic_lr=2e-4,  # critic learning rate
         ppo_epochs=2,  # number of PPO epochs
