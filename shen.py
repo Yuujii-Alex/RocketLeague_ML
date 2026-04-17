@@ -22,7 +22,10 @@ from rewards import (
     DistanceBallGoalReward,
     AlignBallGoalReward,
     GoalScoredReward,    
-    DynamicBallTouchReward,)
+    DynamicBallTouchReward,
+    VelocityPlayerToBallReward,
+    VelocityReward,
+)
 
 
 class DynamicStateMutator(StateMutator[GameState]):
@@ -91,22 +94,27 @@ def build_rlgym_v2_env():
     termination_condition = GoalCondition()
     truncation_condition = NoTouchTimeoutCondition(timeout_seconds=timeout_seconds)
 
-    # Phase 1.5 Reward Structure: Smooth Transition to Aiming
-    # Gently introducing goal-scoring concepts while keeping ball touches highly rewarded
+    # Phase 2 Reward Structure: Velocity and Power Striking Focus
+    # The bot knows to push the ball to the net. Now we teach it to hit hard and carry momentum.
     reward_fn = CombinedReward(
-        # The new long-term objective (scoring)
-        (GoalScoredReward(), 1.0),
+        # The ultimate objective (Incresed from 1.0 to 1.25 to emphasize scoring goals)
+        (GoalScoredReward(), 1.25),
 
-        # Still heavily reward just touching the ball, reduced slightly from 1.0 to 0.5
-        (DynamicBallTouchReward(), 0.5),
+        # Ball touch dropped from 0.5 down to 0.2 (getting closer to final 0.1). 
+        # It must make the touches count now instead of just tapping it.
+        (DynamicBallTouchReward(), 0.2),
 
-        # Introduce aiming and pushing toward goal very gently
-        (DistanceBallGoalReward(), 0.005),
-        (AlignBallGoalReward(), 0.005),
+        # Aiming objectives (Dropped to precise 0.0025 weight)
+        (DistanceBallGoalReward(), 0.0025),
+        (AlignBallGoalReward(), 0.0025),
 
-        # Step down the generic ball-chasing rewards so it starts favoring good hits over any hits
-        (SpeedTowardBallReward(), 0.02),
-        (FaceBallReward(), 0.005),
+        # Introduce high-speed mechanics to fix the "slow pushing"
+        (VelocityPlayerToBallReward(), 0.01), # Forces it to approach the ball with high speed (power hits)
+        (VelocityReward(), 0.005),            # Rewards maintaining momentum across the field
+
+        # Legacy breadcrumbs scaled way down
+        (SpeedTowardBallReward(), 0.001),
+        (FaceBallReward(), 0.001),
     )
 
     obs_builder = DefaultObs(
@@ -148,7 +156,7 @@ if __name__ == "__main__":
 
     os.environ["WANDB_ENTITY"] = "guoalex.dev"
 
-    n_proc = 16
+    n_proc = 4
     min_inference_size = max(1, int(round(n_proc * 0.9)))
 
     learner = Learner(
@@ -162,7 +170,7 @@ if __name__ == "__main__":
         ts_per_iteration=100_000,
         exp_buffer_size=300_000,
         ppo_minibatch_size=50_000,
-        ppo_ent_coef=0.01,
+        ppo_ent_coef=0.015,
         policy_lr=2e-4,
         critic_lr=2e-4,
         ppo_epochs=2,
