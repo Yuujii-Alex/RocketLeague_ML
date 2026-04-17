@@ -17,15 +17,12 @@ from rlgym.rocket_league.state_mutators import (
 from rlgym_ppo.util import RLGymV2GymWrapper
 
 from rewards import (
-    AggressiveGoalReward,
-    AlignBallToGoalReward,
-    AerialGoalStrikeReward,
-    ConstantStepReward,
-    DribbleDecayReward,
-    LandOnWheelsReward,
-    PowerHitReward,
-    VelocityBallToGoalReward,
-)
+    SpeedTowardBallReward,
+    FaceBallReward,
+    DistanceBallGoalReward,
+    AlignBallGoalReward,
+    GoalScoredReward,    
+    DynamicBallTouchReward,)
 
 
 class DynamicStateMutator(StateMutator[GameState]):
@@ -94,15 +91,22 @@ def build_rlgym_v2_env():
     termination_condition = GoalCondition()
     truncation_condition = NoTouchTimeoutCondition(timeout_seconds=timeout_seconds)
 
+    # Phase 1.5 Reward Structure: Smooth Transition to Aiming
+    # Gently introducing goal-scoring concepts while keeping ball touches highly rewarded
     reward_fn = CombinedReward(
-        (AggressiveGoalReward(), 12.0),
-        (VelocityBallToGoalReward(), 4.0),
-        (AlignBallToGoalReward(), 0.35),
-        (PowerHitReward(), 1.5),
-        (DribbleDecayReward(), 0.3),
-        (AerialGoalStrikeReward(min_height=250.0), 4.0),
-        (LandOnWheelsReward(min_height=250.0), 0.8),
-        (ConstantStepReward(), -0.02),
+        # The new long-term objective (scoring)
+        (GoalScoredReward(), 1.0),
+
+        # Still heavily reward just touching the ball, reduced slightly from 1.0 to 0.5
+        (DynamicBallTouchReward(), 0.5),
+
+        # Introduce aiming and pushing toward goal very gently
+        (DistanceBallGoalReward(), 0.005),
+        (AlignBallGoalReward(), 0.005),
+
+        # Step down the generic ball-chasing rewards so it starts favoring good hits over any hits
+        (SpeedTowardBallReward(), 0.02),
+        (FaceBallReward(), 0.005),
     )
 
     obs_builder = DefaultObs(
@@ -122,7 +126,7 @@ def build_rlgym_v2_env():
 
     state_mutator = MutatorSequence(
         FixedTeamSizeMutator(blue_size=blue_team_size, orange_size=orange_team_size),
-        DynamicStateMutator(kickoff_prob=0.35),
+        DynamicStateMutator(),
     )
 
     rlgym_env = RLGym(
@@ -158,16 +162,16 @@ if __name__ == "__main__":
         ts_per_iteration=100_000,
         exp_buffer_size=300_000,
         ppo_minibatch_size=50_000,
-        ppo_ent_coef=0.008,
+        ppo_ent_coef=0.01,
         policy_lr=2e-4,
         critic_lr=2e-4,
         ppo_epochs=2,
         standardize_returns=True,
         standardize_obs=False,
         save_every_ts=100_000,
-        timestep_limit=2_000_000_000,
+        timestep_limit=1_000_000_000,
         checkpoints_save_folder="checkpoints",
-        checkpoint_load_folder=None,
+        checkpoint_load_folder="latest",
         add_unix_timestamp=False,
         log_to_wandb=True,
         wandb_project_name="Shen",
