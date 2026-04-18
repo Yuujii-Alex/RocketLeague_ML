@@ -374,6 +374,7 @@ class BoostAmountReward(RewardFunction):
         return rewards
 
 class ForwardVelocityReward(RewardFunction):
+    """Encourages forward movement, and penalizes backward movement. This punishes backwards velocity"""
     def reset(self, agents: List[str], initial_state: GameState, shared_info: Dict[str, Any]) -> None:
         pass
     def get_rewards(self, agents: List[str], state: GameState, is_terminated: Dict[str, bool], is_truncated: Dict[str, bool], shared_info: Dict[str, Any]) -> Dict[str, float]:
@@ -381,6 +382,50 @@ class ForwardVelocityReward(RewardFunction):
         for agent_id in agents:
             car = state.cars[agent_id]
             vel = car.physics.linear_velocity
-            forward = car.physics.forward()
+            forward = car.physics.forward
             rewards[agent_id] = float(np.dot(forward, vel) / common_values.CAR_MAX_SPEED)
+        return rewards
+
+
+
+class LandingReward(RewardFunction):
+    """Learns to land properly (on wheels) after being in the air. 
+    Non-farmable: requires the car to have been airborne for a minimum duration before rewarding."""
+    def __init__(self, min_air_ticks: int = 30):
+        super().__init__()
+        self.min_air_ticks = min_air_ticks
+        self.air_ticks = {}
+        self.was_on_ground = {}
+
+    def reset(self, agents: List[str], initial_state: GameState, shared_info: Dict[str, Any]) -> None:
+        self.air_ticks = {agent: 0 for agent in agents}
+        self.was_on_ground = {agent: True for agent in agents}
+
+    def get_rewards(self, agents: List[str], state: GameState, is_terminated: Dict[str, bool], is_truncated: Dict[str, bool], shared_info: Dict[str, Any]) -> Dict[str, float]:
+        rewards = {}
+        for agent_id in agents:
+            car = state.cars[agent_id]
+            reward = 0.0
+            
+            is_on_ground = car.on_ground
+            was_on_ground = self.was_on_ground.get(agent_id, True)
+            
+            # Count how long the car is in the air
+            if not is_on_ground:
+                self.air_ticks[agent_id] = self.air_ticks.get(agent_id, 0) + 1
+            else:
+                if not was_on_ground:
+                    # The car just landed this exact tick
+                    if self.air_ticks.get(agent_id, 0) > self.min_air_ticks:
+                        # car.physics.up[2] is the Z-component of the car's Up vector.
+                        # It is 1.0 if flat on its wheels, -1.0 if upside down on its roof.
+                        up_z = float(car.physics.up[2])
+                        reward = up_z # High reward for good landing, big penalty for turtle landing
+                    
+                    # Reset air time counter
+                    self.air_ticks[agent_id] = 0
+            
+            self.was_on_ground[agent_id] = is_on_ground
+            rewards[agent_id] = float(reward)
+            
         return rewards
