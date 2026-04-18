@@ -25,6 +25,8 @@ from rewards import (
     DynamicBallTouchReward,
     VelocityPlayerToBallReward,
     VelocityReward,
+    ForwardVelocityReward,
+    TouchedLastReward
 )
 
 
@@ -94,23 +96,29 @@ def build_rlgym_v2_env():
     termination_condition = GoalCondition()
     truncation_condition = NoTouchTimeoutCondition(timeout_seconds=timeout_seconds)
 
-    # Phase 2 Reward Structure: Velocity and Power Striking Focus
-    # The bot knows to push the ball to the net. Now we teach it to hit hard and carry momentum.
+    # Phase 2.1 Reward Structure: Correcting the "Flying/Missing" Rewards
+    # Lowering velocity rewards so it doesn't just hold boost and flip blindly.
+    # Raising touch reward back up so it actually has to HIT the ball again.
     reward_fn = CombinedReward(
-        # The ultimate objective (Incresed from 1.0 to 1.25 to emphasize scoring goals)
-        (GoalScoredReward(), 1.25),
+        (GoalScoredReward(), 1.3),
+        
+        # Raised back up from 0.2 to 0.4. It MUST remember to touch the ball.
+        (DynamicBallTouchReward(), 0.4),
 
-        # Ball touch dropped from 0.5 down to 0.2 (getting closer to final 0.1). 
-        # It must make the touches count now instead of just tapping it.
-        (DynamicBallTouchReward(), 0.2),
+        # Give it a steady drip of points for being the person currently in control of the ball.
+        (TouchedLastReward(), 0.05),
 
-        # Aiming objectives (Dropped to precise 0.0025 weight)
         (DistanceBallGoalReward(), 0.0025),
         (AlignBallGoalReward(), 0.0025),
 
-        # Introduce high-speed mechanics to fix the "slow pushing"
-        (VelocityPlayerToBallReward(), 0.01), # Forces it to approach the ball with high speed (power hits)
-        (VelocityReward(), 0.005),            # Rewards maintaining momentum across the field
+        # Severely nerfed the speed rewards. 
+        # Making them tie-breakers for "good touches" instead of a raw reason to fly around.
+        (VelocityPlayerToBallReward(), 0.001), # Down from 0.01
+        (VelocityReward(), 0.0001),            # Down from 0.0005 
+        (ForwardVelocityReward(), 0.001),      # Down from 0.01
+
+        (SpeedTowardBallReward(), 0.001),
+        (FaceBallReward(), 0.001),
 
         # Legacy breadcrumbs scaled way down
         (SpeedTowardBallReward(), 0.001),
@@ -155,8 +163,9 @@ if __name__ == "__main__":
     from rlgym_ppo import Learner
 
     os.environ["WANDB_ENTITY"] = "guoalex.dev"
+    os.environ["WANDB_MODE"] = "online"
 
-    n_proc = 4
+    n_proc = 11
     min_inference_size = max(1, int(round(n_proc * 0.9)))
 
     learner = Learner(
@@ -177,11 +186,11 @@ if __name__ == "__main__":
         standardize_returns=True,
         standardize_obs=False,
         save_every_ts=100_000,
-        timestep_limit=1_000_000_000,
+        timestep_limit=10_000_000_000,
         checkpoints_save_folder="checkpoints",
         checkpoint_load_folder="latest",
         add_unix_timestamp=False,
-        log_to_wandb=True,
+        log_to_wandb=False,
         wandb_project_name="Shen",
         wandb_run_name="Shen_0.01",
     )
