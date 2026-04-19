@@ -17,7 +17,7 @@ from rlgym.rocket_league.state_mutators import (
 from rlgym_ppo.util import RLGymV2GymWrapper
 
 from rewards import (
-    SpeedTowardBallReward,
+    LandingReward,
     FaceBallReward,
     DistanceBallGoalReward,
     AlignBallGoalReward,
@@ -26,7 +26,14 @@ from rewards import (
     VelocityPlayerToBallReward,
     VelocityReward,
     ForwardVelocityReward,
-    TouchedLastReward
+    TouchedLastReward,
+    DistancePlayerBallReward,
+    ClosestToBallReward,
+    BehindBallReward,
+    KickoffReward,
+    BoostAmountReward,
+    BoostDifferenceReward,
+    DemoReward,
 )
 
 
@@ -96,33 +103,33 @@ def build_rlgym_v2_env():
     termination_condition = GoalCondition()
     truncation_condition = NoTouchTimeoutCondition(timeout_seconds=timeout_seconds)
 
-    # Phase 2.1 Reward Structure: Correcting the "Flying/Missing" Rewards
-    # Lowering velocity rewards so it doesn't just hold boost and flip blindly.
-    # Raising touch reward back up so it actually has to HIT the ball again.
     reward_fn = CombinedReward(
-        (GoalScoredReward(), 1.3),
-        
-        # Raised back up from 0.2 to 0.4. It MUST remember to touch the ball.
-        (DynamicBallTouchReward(), 0.4),
+        # Top-Level Objectives
+        (GoalScoredReward(), 1.4),
+        (DynamicBallTouchReward(), 0.1),
+        (DemoReward(), 0.3),
 
-        # Give it a steady drip of points for being the person currently in control of the ball.
-        (TouchedLastReward(), 0.05),
-
+        # Spacing and Positioning
+        (DistancePlayerBallReward(), 0.0025),
         (DistanceBallGoalReward(), 0.0025),
+        (ClosestToBallReward(), 0.00125),
+        (BehindBallReward(), 0.00125),
+        (TouchedLastReward(), 0.00125),
+
+        # Alignment and Targeting
         (AlignBallGoalReward(), 0.0025),
+        (FaceBallReward(), 0.000625),
 
-        # Severely nerfed the speed rewards. 
-        # Making them tie-breakers for "good touches" instead of a raw reason to fly around.
-        (VelocityPlayerToBallReward(), 0.001), # Down from 0.01
-        (VelocityReward(), 0.0001),            # Down from 0.0005 
-        (ForwardVelocityReward(), 0.001),      # Down from 0.01
+        # Velocity and Speed
+        (VelocityPlayerToBallReward(), 0.00125),
+        (VelocityReward(), 0.000625),
+        (ForwardVelocityReward(), 0.0015),
 
-        (SpeedTowardBallReward(), 0.001),
-        (FaceBallReward(), 0.001),
-
-        # Legacy breadcrumbs scaled way down
-        (SpeedTowardBallReward(), 0.001),
-        (FaceBallReward(), 0.001),
+        # Situational
+        (BoostAmountReward(), 0.00125),
+        (BoostDifferenceReward(), 0.1),
+        (KickoffReward(), 0.1),
+        (LandingReward(), 0.00125),
     )
 
     obs_builder = DefaultObs(
@@ -165,8 +172,15 @@ if __name__ == "__main__":
     os.environ["WANDB_ENTITY"] = "guoalex.dev"
     os.environ["WANDB_MODE"] = "online"
 
-    n_proc = 11
+    n_proc = 4
     min_inference_size = max(1, int(round(n_proc * 0.9)))
+
+    # Time Horizon / Discount Factor (Gamma)
+    # A = 15 actions per second (120hz / 8 ticks per action)
+    # T = Time horizon in seconds before a reward is worth half (Starts at 10, scales to 20)
+    T = 10.0
+    A = 15.0
+    gamma = float(np.exp(np.log(0.5) / (T * A)))  # ~0.99538
 
     learner = Learner(
         build_rlgym_v2_env,
@@ -179,10 +193,11 @@ if __name__ == "__main__":
         ts_per_iteration=100_000,
         exp_buffer_size=300_000,
         ppo_minibatch_size=50_000,
-        ppo_ent_coef=0.015,
-        policy_lr=2e-4,
-        critic_lr=2e-4,
-        ppo_epochs=2,
+        ppo_ent_coef=0.01,  # Seer paper initialized to 0.01 and scaled to 0.005
+        policy_lr=5e-5,
+        critic_lr=5e-5,
+        ppo_epochs=32,
+        gae_gamma=gamma,
         standardize_returns=True,
         standardize_obs=False,
         save_every_ts=100_000,
@@ -190,7 +205,7 @@ if __name__ == "__main__":
         checkpoints_save_folder="checkpoints",
         checkpoint_load_folder="latest",
         add_unix_timestamp=False,
-        log_to_wandb=False,
+        log_to_wandb=True,
         wandb_project_name="Shen",
         wandb_run_name="Shen_0.01",
     )
