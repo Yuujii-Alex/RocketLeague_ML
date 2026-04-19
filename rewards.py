@@ -388,6 +388,55 @@ class ForwardVelocityReward(RewardFunction):
 
 
 
+class BoostDifferenceReward(RewardFunction):
+    def __init__(self):
+        super().__init__()
+        self.last_boost = {}
+
+    def reset(self, agents: List[str], initial_state: GameState, shared_info: Dict[str, Any]) -> None:
+        self.last_boost = {agent: float(np.sqrt(min(1.0, initial_state.cars[agent].boost_amount / 100.0 if initial_state.cars[agent].boost_amount > 1.0 else initial_state.cars[agent].boost_amount))) for agent in agents}
+
+    def get_rewards(self, agents: List[str], state: GameState, is_terminated: Dict[str, bool], is_truncated: Dict[str, bool], shared_info: Dict[str, Any]) -> Dict[str, float]:
+        rewards = {}
+        for agent_id in agents:
+            boost = state.cars[agent_id].boost_amount
+            if boost > 1.0: boost /= 100.0
+            curr_boost_val = float(np.sqrt(boost))
+            last_boost_val = self.last_boost.get(agent_id, curr_boost_val)
+            rewards[agent_id] = curr_boost_val - last_boost_val
+            self.last_boost[agent_id] = curr_boost_val
+        return rewards
+
+
+class DemoReward(RewardFunction):
+    def __init__(self):
+        super().__init__()
+        self.last_demoed = {}
+
+    def reset(self, agents: List[str], initial_state: GameState, shared_info: Dict[str, Any]) -> None:
+        self.last_demoed = {car_id: initial_state.cars[car_id].is_demoed for car_id in initial_state.cars}
+
+    def get_rewards(self, agents: List[str], state: GameState, is_terminated: Dict[str, bool], is_truncated: Dict[str, bool], shared_info: Dict[str, Any]) -> Dict[str, float]:
+        rewards = {agent: 0.0 for agent in agents}
+        
+        for agent_id in agents:
+            agent_car = state.cars[agent_id]
+            
+            # Check all enemies to see if they just crossed into the is_demoed state
+            for enemy_id, enemy_car in state.cars.items():
+                if enemy_car.team_num != agent_car.team_num:
+                    was_demoed = self.last_demoed.get(enemy_id, False)
+                    if enemy_car.is_demoed and not was_demoed:
+                        # If an enemy became demoed this exact tick, reward our agent
+                        rewards[agent_id] += 1.0
+
+        # Update the history for the next tick
+        for car_id, car in state.cars.items():
+            self.last_demoed[car_id] = car.is_demoed
+            
+        return rewards
+
+
 class LandingReward(RewardFunction):
     """Learns to land properly (on wheels) after being in the air. 
     Non-farmable: requires the car to have been airborne for a minimum duration before rewarding."""
@@ -427,5 +476,93 @@ class LandingReward(RewardFunction):
             
             self.was_on_ground[agent_id] = is_on_ground
             rewards[agent_id] = float(reward)
+            
+        return rewards
+
+
+class FlipResetReward(RewardFunction):
+    """Rewards the agent for successfully achieving a flip reset (getting their flip back in mid-air).
+    Non-farmable: Requires the car to be significantly high in the air when the flip state changes."""
+    def __init__(self, min_height: float = 300.0):
+        super().__init__()
+        self.min_height = min_height
+        self.had_flip = {}
+
+    def reset(self, agents: List[str], initial_state: GameState, shared_info: Dict[str, Any]) -> None:
+        self.had_flip = {agent: initial_state.cars[agent].has_flip for agent in agents}
+
+    def get_rewards(self, agents: List[str], state: GameState, is_terminated: Dict[str, bool], is_truncated: Dict[str, bool], shared_info: Dict[str, Any]) -> Dict[str, float]:
+        rewards = {}
+        for agent_id in agents:
+            car = state.cars[agent_id]
+            reward = 0.0
+            
+            # If the car did NOT have a flip last tick, but DOES have a flip this tick
+            if car.has_flip and not self.had_flip.get(agent_id, True):
+                # And the car is undeniably in the air (not just driving up a wall)
+                if not car.on_ground and car.physics.position[2] > self.min_height:
+                    reward = 1.0  # Massive payout for a flip reset
+                    
+            self.had_flip[agent_id] = car.has_flip
+            rewards[agent_id] = reward
+            
+        return rewards
+
+
+class WaveDashReward(RewardFunction):
+    """Rewards the agent for performing a wavedash (flipping immediately before hitting the ground)."""
+    def __init__(self):
+        super().__init__()
+        self.was_flipping = {}
+
+    def reset(self, agents: List[str], initial_state: GameState, shared_info: Dict[str, Any]) -> None:
+        self.was_flipping = {agent: initial_state.cars[agent].is_flipping for agent in agents}
+
+    def get_rewards(self, agents: List[str], state: GameState, is_terminated: Dict[str, bool], is_truncated: Dict[str, bool], shared_info: Dict[str, Any]) -> Dict[str, float]:
+        rewards = {}
+        for agent_id in agents:
+            car = state.cars[agent_id]
+            reward = 0.0
+            
+            # If the car just started a flip this exact tick
+            if car.is_flipping and not self.was_flipping.get(agent_id, False):
+                # If they are extremely close to the ground, but not ON the ground
+                if not car.on_ground and car.physics.position[2] < 50.0:
+                    reward = 1.0  # Successfully executed a wavedash timing
+                    
+            self.was_flipping[agent_id] = car.is_flipping
+            rewards[agent_id] = reward
+            
+        return rewards
+
+
+class AirDribbleCarryReward(RewardFunction):
+    """Rewards the agent for keeping the ball close to its nose while both are high in the air."""
+    def __init__(self, min_height: float = 400.0, max_distance: float = 200.0):
+        super().__init__()
+        self.min_height = min_height
+        self.max_distance = max_distance
+
+    def reset(self, agents: List[str], initial_state: GameState, shared_info: Dict[str, Any]) -> None:
+        pass
+
+    def get_rewards(self, agents: List[str], state: GameState, is_terminated: Dict[str, bool], is_truncated: Dict[str, bool], shared_info: Dict[str, Any]) -> Dict[str, float]:
+        rewards = {}
+        ball_pos = state.ball.position
+        
+        for agent_id in agents:
+            car = state.cars[agent_id]
+            reward = 0.0
+            
+            # Check if both car and ball are in the air
+            if not car.on_ground and car.physics.position[2] > self.min_height and ball_pos[2] > self.min_height:
+                dist = float(np.linalg.norm(car.physics.position - ball_pos))
+                
+                # If the ball is resting very close to the car in mid-air
+                if dist < self.max_distance:
+                    # Reward scales up the closer the ball is to the car
+                    reward = 1.0 - (dist / self.max_distance)
+                    
+            rewards[agent_id] = reward
             
         return rewards
