@@ -483,9 +483,10 @@ class LandingReward(RewardFunction):
 class FlipResetReward(RewardFunction):
     """Rewards the agent for successfully achieving a flip reset (getting their flip back in mid-air).
     Non-farmable: Requires the car to be significantly high in the air when the flip state changes."""
-    def __init__(self, min_height: float = 300.0):
+    def __init__(self, min_height: float = 300.0, require_ball_contact: bool = True):
         super().__init__()
         self.min_height = min_height
+        self.require_ball_contact = require_ball_contact
         self.had_flip = {}
 
     def reset(self, agents: List[str], initial_state: GameState, shared_info: Dict[str, Any]) -> None:
@@ -499,9 +500,15 @@ class FlipResetReward(RewardFunction):
             
             # If the car did NOT have a flip last tick, but DOES have a flip this tick
             if car.has_flip and not self.had_flip.get(agent_id, True):
-                # And the car is undeniably in the air (not just driving up a wall)
-                if not car.on_ground and car.physics.position[2] > self.min_height:
-                    reward = 1.0  # Massive payout for a flip reset
+                # And the car is undeniably in the air (not just driving up a wall or ceiling)
+                if not car.on_ground and car.physics.position[2] > self.min_height and car.physics.position[2] < 1900.0:
+                    # Exploit check: verify the car is physically near the ball
+                    dist_to_ball = float(np.linalg.norm(car.physics.position - state.ball.position))
+                    if dist_to_ball < 250.0:
+                        # Optional: Make sure they actually touched the ball to get the flip
+                        # (Prevents farming resets off the ceiling or falling off the top of the goal post)
+                        if not self.require_ball_contact or car.ball_touches > 0:
+                            reward = 1.0  # Massive payout for a flip reset
                     
             self.had_flip[agent_id] = car.has_flip
             rewards[agent_id] = reward
@@ -510,10 +517,13 @@ class FlipResetReward(RewardFunction):
 
 
 class WaveDashReward(RewardFunction):
-    """Rewards the agent for performing a wavedash (flipping immediately before hitting the ground)."""
-    def __init__(self):
+    """Rewards the agent for performing a wavedash (flipping immediately before hitting the ground).
+    Requires a minimum forward velocity to distinguish it from just flipping on the spot."""
+    def __init__(self, min_speed: float = 300.0, max_height: float = 50.0):
         super().__init__()
         self.was_flipping = {}
+        self.min_speed = min_speed
+        self.max_height = max_height
 
     def reset(self, agents: List[str], initial_state: GameState, shared_info: Dict[str, Any]) -> None:
         self.was_flipping = {agent: initial_state.cars[agent].is_flipping for agent in agents}
@@ -526,9 +536,15 @@ class WaveDashReward(RewardFunction):
             
             # If the car just started a flip this exact tick
             if car.is_flipping and not self.was_flipping.get(agent_id, False):
-                # If they are extremely close to the ground, but not ON the ground
-                if not car.on_ground and car.physics.position[2] < 50.0:
-                    reward = 1.0  # Successfully executed a wavedash timing
+                # Check if close to ground, but NOT on the ground
+                if not car.on_ground and car.physics.position[2] < self.max_height:
+                    # Exploit check: Wavedashing means dodging into the ground while FALLING. 
+                    # If velocity Z > 0, they just jumped and instantly dodged.
+                    if car.physics.linear_velocity[2] < 0.0:
+                        # Make sure the car is actually moving so it doesn't just farm stationary hops
+                        speed = float(np.linalg.norm(car.physics.linear_velocity))
+                        if speed > self.min_speed:
+                            reward = 1.0  # Successfully executed a wavedash timing
                     
             self.was_flipping[agent_id] = car.is_flipping
             rewards[agent_id] = reward
@@ -560,8 +576,11 @@ class AirDribbleCarryReward(RewardFunction):
                 
                 # If the ball is resting very close to the car in mid-air
                 if dist < self.max_distance:
-                    # Reward scales up the closer the ball is to the car
-                    reward = 1.0 - (dist / self.max_distance)
+                    # Exploit check: the ball must be physically *above/in front of* the car,
+                    # ruling out situations where the ball and car just fall past each other
+                    if ball_pos[2] > car.physics.position[2] - 20.0:
+                        # Reward scales up the closer the ball is to the car
+                        reward = 1.0 - (dist / self.max_distance)
                     
             rewards[agent_id] = reward
             

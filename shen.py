@@ -34,6 +34,9 @@ from rewards import (
     BoostAmountReward,
     BoostDifferenceReward,
     DemoReward,
+    WaveDashReward,
+    FlipResetReward,
+    AirDribbleCarryReward,
 )
 
 
@@ -104,11 +107,25 @@ def build_rlgym_v2_env():
     truncation_condition = NoTouchTimeoutCondition(timeout_seconds=timeout_seconds)
 
     reward_fn = CombinedReward(
-        # Phase 1: Pure Fundamentals
-        (GoalScoredReward(), 1.05),
+        (GoalScoredReward(), 1.25),
+        (BoostDifferenceReward(), 0.1),
         (DynamicBallTouchReward(), 0.1),
+        (DemoReward(), 0.3),
+        (DistancePlayerBallReward(), 0.0025),
+        (DistanceBallGoalReward(), 0.0025),
+        (FaceBallReward(), 0.000625),
+        (AlignBallGoalReward(), 0.0025),
+        (ClosestToBallReward(), 0.00125),
+        (TouchedLastReward(), 0.00125),
+        (BehindBallReward(), 0.00125),
         (VelocityPlayerToBallReward(), 0.00125),
+        (KickoffReward(), 0.1),
+        (VelocityReward(), 0.000625),
+        (BoostAmountReward(), 0.00125),
         (ForwardVelocityReward(), 0.0015),
+        (WaveDashReward(), 0.005),
+        (FlipResetReward(), 0.05), 
+        (AirDribbleCarryReward(), 0.0002)
     )
 
     obs_builder = DefaultObs(
@@ -166,27 +183,27 @@ if __name__ == "__main__":
         n_proc=n_proc,
         min_inference_size=min_inference_size,
         metrics_logger=None,
-        ppo_batch_size=100_000,
-        policy_layer_sizes=[1024, 1024, 512, 512],
-        critic_layer_sizes=[1024, 1024, 512, 512],
-        ts_per_iteration=100_000,
-        exp_buffer_size=300_000,
-        ppo_minibatch_size=50_000,
-        ppo_ent_coef=0.001, # Reduced entropy for focus
-        policy_lr=5e-5,
-        critic_lr=5e-5,
-        ppo_epochs=10, # Slightly lower to avoid overfitting useless policy
-        gae_gamma=gamma,
+        ppo_batch_size=110592,
+        policy_layer_sizes=[512, 256, 256, 128],
+        critic_layer_sizes=[512, 256, 128],
+        ts_per_iteration=110592,
+        exp_buffer_size=110592 * 3,
+        ppo_minibatch_size=27648,
+        ppo_ent_coef=0.01,
+        policy_lr=1e-5,
+        critic_lr=1e-5,
+        ppo_epochs=32,
+        gae_gamma=float(np.exp(np.log(0.5) / (10.0 * 15.0))), # Evaluates to Time Horizon=10s
         standardize_returns=True,
         standardize_obs=False,
         save_every_ts=100_000,
         timestep_limit=10_000_000_000,
-        checkpoints_save_folder="checkpoints_phase1",
+        checkpoints_save_folder="checkpoints_v2",
         checkpoint_load_folder="latest",
         add_unix_timestamp=False,
         log_to_wandb=True,
         wandb_project_name="Shen",
-        wandb_run_name="Shen_Phase1",
+        wandb_run_name="Shen_v2",
     )
 
     learner.learn()
