@@ -5,6 +5,7 @@ __pycache__/
 
 # Training Data & Checkpoints (Massive files)
 checkpoints/
+checkpoints_phase1/
 models/
 
 # Logging & Monitoring

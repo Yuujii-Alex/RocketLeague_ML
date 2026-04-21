@@ -104,32 +104,11 @@ def build_rlgym_v2_env():
     truncation_condition = NoTouchTimeoutCondition(timeout_seconds=timeout_seconds)
 
     reward_fn = CombinedReward(
-        # Top-Level Objectives
-        (GoalScoredReward(), 1.4),
+        # Phase 1: Pure Fundamentals
+        (GoalScoredReward(), 1.05),
         (DynamicBallTouchReward(), 0.1),
-        (DemoReward(), 0.3),
-
-        # Spacing and Positioning
-        (DistancePlayerBallReward(), 0.0025),
-        (DistanceBallGoalReward(), 0.0025),
-        (ClosestToBallReward(), 0.00125),
-        (BehindBallReward(), 0.00125),
-        (TouchedLastReward(), 0.00125),
-
-        # Alignment and Targeting
-        (AlignBallGoalReward(), 0.0025),
-        (FaceBallReward(), 0.000625),
-
-        # Velocity and Speed
         (VelocityPlayerToBallReward(), 0.00125),
-        (VelocityReward(), 0.000625),
         (ForwardVelocityReward(), 0.0015),
-
-        # Situational
-        (BoostAmountReward(), 0.00125),
-        (BoostDifferenceReward(), 0.1),
-        (KickoffReward(), 0.1),
-        (LandingReward(), 0.00125),
     )
 
     obs_builder = DefaultObs(
@@ -172,7 +151,7 @@ if __name__ == "__main__":
     os.environ["WANDB_ENTITY"] = "guoalex.dev"
     os.environ["WANDB_MODE"] = "online"
 
-    n_proc = 4
+    n_proc = 11
     min_inference_size = max(1, int(round(n_proc * 0.9)))
 
     # Time Horizon / Discount Factor (Gamma)
@@ -193,21 +172,21 @@ if __name__ == "__main__":
         ts_per_iteration=100_000,
         exp_buffer_size=300_000,
         ppo_minibatch_size=50_000,
-        ppo_ent_coef=0.01,  # Seer paper initialized to 0.01 and scaled to 0.005
+        ppo_ent_coef=0.001, # Reduced entropy for focus
         policy_lr=5e-5,
         critic_lr=5e-5,
-        ppo_epochs=32,
+        ppo_epochs=10, # Slightly lower to avoid overfitting useless policy
         gae_gamma=gamma,
         standardize_returns=True,
         standardize_obs=False,
         save_every_ts=100_000,
         timestep_limit=10_000_000_000,
-        checkpoints_save_folder="checkpoints",
+        checkpoints_save_folder="checkpoints_phase1",
         checkpoint_load_folder="latest",
         add_unix_timestamp=False,
         log_to_wandb=True,
         wandb_project_name="Shen",
-        wandb_run_name="Shen_0.01",
+        wandb_run_name="Shen_Phase1",
     )
 
     learner.learn()

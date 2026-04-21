@@ -368,7 +368,7 @@ class BoostAmountReward(RewardFunction):
         for agent_id in agents:
             # boost_amount is 0.0 to 1.0 conventionally or 0-100?
             # Adjusting to handle either by bounding it max to 1
-            boost = state.cars[agent_id].boost_amount
+            boost = max(0.0, state.cars[agent_id].boost_amount)
             if boost > 1.0: boost /= 100.0 
             rewards[agent_id] = float(np.sqrt(boost))
         return rewards
